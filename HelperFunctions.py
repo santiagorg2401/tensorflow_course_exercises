@@ -105,18 +105,24 @@ class ImportHelperFunctions:
 
 
 class ModelHelperFunctions(ImportHelperFunctions):
-    def __init__(self, img_shape, model, test_data):
+    def __init__(self, img_shape, model, class_names, test_data=None):
         self.__img_shape = img_shape
         self.__model = model
-        self.__test_data = test_data
+        self.__class_names = class_names
 
-        self.__y_true = []
-        for images, labels in test_data.unbatch():
-            self.__y_true.append(labels.numpy().argmax())
+        if test_data != None:
+            self.__test_data = test_data
 
-        self.__y_probs = self.__model.predict(test_data)
-        self.__y_preds = self.__y_probs.argmax(axis=1)
-        self.__class_names = self.__test_data.class_names
+            self.__y_true = []
+            for images, labels in test_data.unbatch():
+                # Check whether or not labels is Int or OneHot encoded.
+                if (labels.numpy().shape == ()):
+                    self.__y_true.append(labels.numpy())
+                else:
+                    self.__y_true.append(labels.numpy().argmax())
+
+            self.__y_probs = self.__model.predict(test_data)
+            self.__y_preds = self.__y_probs.argmax(axis=1)
 
     # Make predictions.
     def pred_and_plot(self, filename, scale=True):
@@ -157,28 +163,30 @@ class ModelHelperFunctions(ImportHelperFunctions):
         figsize: Tuple containing size of plot.
         numImgs: Integer containig number of images to predict and plot.
         """
-        image_batch, label_batch = self.__test_data.as_numpy_iterator().next()
-
         plt.figure(figsize=figsize)
-        for i in range(numImgs):
-            img = image_batch[i]
-            img = tf.image.resize(img, size=self.__img_shape)
+        i = 0
+        numRows = int(numImgs / 3) + (numImgs % 3 > 0)
+        for image, label in self.__test_data.unbatch().take(numImgs):
+            y_prob = self.__model.predict(tf.expand_dims(image, axis=0))
+            y_pred = self.__class_names[y_prob.argmax()]
 
-            y_pred = self.__model.predict(tf.expand_dims(img, axis=0))
-            y_pred = self.__class_names[y_pred.argmax()]
+            if (label.numpy().shape == ()):
+                y_true = label.numpy()
+            else:
+                y_true = label.numpy().argmax()
 
-            y_true = label_batch[i]
-            y_true = self.__class_names[y_true.argmax()]
+            y_true = self.__class_names[y_true]
 
             if y_pred == y_true:
                 color = 'g'
             else:
                 color = 'r'
 
-            ax = plt.subplot(3, 3, i + 1)
-            plt.imshow(img/255.)
+            ax = plt.subplot(numRows, 3, i + 1)
+            plt.imshow(image/255.)
             plt.title(f"Prediction: {y_pred}, Actual: {y_true}", c=color)
             plt.axis("off")
+            i += 1
 
     # Evaluate the model.
 
@@ -311,7 +319,7 @@ class ModelHelperFunctions(ImportHelperFunctions):
         for rect in scores:
             width = rect.get_width()
             ax.text(1.03*width, rect.get_y() + rect.get_height()/1.5,
-                    f"{width:.2f}",
+                    f"{width:.4f}",
                     ha='center', va='bottom')
         if savefig:
             fig.savefig("confusion_matrix.png")
@@ -401,13 +409,17 @@ class ModelHelperFunctions(ImportHelperFunctions):
         if savefig:
             fig.savefig("confusion_matrix.png")
 
-    def get_preds_df(self):
+    def get_preds_df(self, path=None):
         """Returns a Pandas DataFrame containing all predictions on test dataset"""
         #  Get all file paths from test dataset.
-        filepaths = []
-        for filepath in self.__test_data.list_files("101_food_classes_10_percent/test/*/*.jpg",
-                                                    shuffle=False):
-            filepaths.append(filepath.numpy())
+
+        if path == None:
+            filepaths = np.zeros(len(self.__y_preds))
+        else:
+            filepaths = []
+            for filepath in self.__test_data.list_files(path,
+                                                        shuffle=False):
+                filepaths.append(filepath.numpy())
 
         pred_df = pd.DataFrame({"img_path": filepaths,
                                 "y_true": self.__y_true,
@@ -478,7 +490,14 @@ class ModelHelperFunctions(ImportHelperFunctions):
                                                                  save_weights_only=True,
                                                                  save_best_only=True,
                                                                  save_freq="epoch",
+                                                                 monitor="val_loss",
                                                                  verbose=1)
 
         print(f"Saving checkpoint to: {checkpoint_path}")
         return checkpoint_callback
+
+    def create_earlyStopping_callback(self, patience):
+        earlyStopping_callback = tf.keras.callbacks.EarlyStopping(
+            monitor="val_loss", patience=patience)
+
+        return earlyStopping_callback
