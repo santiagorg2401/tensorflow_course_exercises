@@ -1,0 +1,10 @@
+tensorflow==2.10
+tensorflow-hub
+tensorflow-datasets
+scipy
+scikit-learn
+matplotlib
+pandas
+jupyterlab
+notebook
+jupyter_http_over_ws
